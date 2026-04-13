@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAW Mat Enquiry Drag and Drop</title>
+  <style>
+    /* ── Reset & Base ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f0f4f8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    /* ── Card ───────────────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      padding: 40px 44px 36px;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .header { text-align: center; margin-bottom: 32px; }
+
+    .header .icon {
+      font-size: 48px;
+      line-height: 1;
+      margin-bottom: 12px;
+    }
+
+    .header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a202c;
+    }
+
+    .header p {
+      font-size: 14px;
+      color: #718096;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+
+    /* ── Upload slots ───────────────────────────────────────────────────── */
+    .upload-group { display: flex; flex-direction: column; gap: 20px; margin-bottom: 28px; }
+
+    .upload-slot label.slot-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #4a5568;
+      margin-bottom: 8px;
+      letter-spacing: .4px;
+      text-transform: uppercase;
+    }
+
+    .drop-zone {
+      border: 2px dashed #cbd5e0;
+      border-radius: 10px;
+      padding: 22px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover { border-color: #4299e1; background: #ebf8ff; }
+
+    .drop-zone.has-file { border-color: #48bb78; background: #f0fff4; }
+
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+
+    .drop-zone .dz-icon { font-size: 28px; margin-bottom: 6px; }
+
+    .drop-zone .dz-text {
+      font-size: 13px;
+      color: #718096;
+    }
+
+    .drop-zone .dz-text span { color: #3182ce; font-weight: 600; }
+
+    .drop-zone .dz-filename {
+      font-size: 13px;
+      font-weight: 600;
+      color: #276749;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+
+    /* ── Generate button ────────────────────────────────────────────────── */
+    #generateBtn {
+      width: 100%;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #3182ce, #2b6cb0);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    #generateBtn:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
+    #generateBtn:disabled { opacity: .55; cursor: not-allowed; }
+
+    /* ── Spinner ────────────────────────────────────────────────────────── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 3px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Status banner ──────────────────────────────────────────────────── */
+    #status {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.55;
+      display: none;
+    }
+
+    #status.success {
+      background: #f0fff4;
+      border: 1px solid #9ae6b4;
+      color: #276749;
+      display: block;
+    }
+
+    #status.error {
+      background: #fff5f5;
+      border: 1px solid #fc8181;
+      color: #c53030;
+      display: block;
+      white-space: pre-wrap;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    .footer {
+      text-align: center;
+      margin-top: 28px;
+      font-size: 12px;
+      color: #a0aec0;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!-- Header -->
+    <div class="header">
+      <div class="icon">📋</div>
+      <h1>RAW Mat Enquiry Drag and Drop</h1>
+      <p>Upload the PMC BOM list and the Enquiry template.<br>
+         The system will map all PMC rows and return a filled-out Excel file.</p>
+    </div>
+
+    <!-- Upload slots -->
+    <div class="upload-group">
+
+      <!-- BOM -->
+      <div class="upload-slot">
+        <label class="slot-label">1 · PMC BOM List</label>
+        <div class="drop-zone" id="bomZone">
+          <input type="file" id="bomFile" accept=".xlsx,.xlsm,.xls" />
+          <div class="dz-icon">📂</div>
+          <div class="dz-text">Drag &amp; drop or <span>browse</span></div>
+          <div class="dz-filename" id="bomName"></div>
+        </div>
+      </div>
+
+      <!-- ENQ Template -->
+      <div class="upload-slot">
+        <label class="slot-label">2 · Enquiry Raw Mat Template</label>
+        <div class="drop-zone" id="enqZone">
+          <input type="file" id="enqFile" accept=".xlsx,.xlsm,.xls" />
+          <div class="dz-icon">📄</div>
+          <div class="dz-text">Drag &amp; drop or <span>browse</span></div>
+          <div class="dz-filename" id="enqName"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Generate button -->
+    <button id="generateBtn" onclick="generate()">
+      <div class="spinner" id="spinner"></div>
+      <span id="btnText">Generate Output</span>
+    </button>
+
+    <!-- Status -->
+    <div id="status"></div>
+
+    <div class="footer">Supported formats: .xlsx &nbsp;·&nbsp; .xlsm</div>
+  </div>
+
+  <script>
+    // ── Drop-zone wiring ────────────────────────────────────────────────
+    function wireZone(zoneId, inputId, nameId) {
+      const zone  = document.getElementById(zoneId);
+      const input = document.getElementById(inputId);
+      const name  = document.getElementById(nameId);
+
+      const refresh = () => {
+        if (input.files.length) {
+          name.textContent = input.files[0].name;
+          zone.classList.add("has-file");
+        } else {
+          name.textContent = "";
+          zone.classList.remove("has-file");
+        }
+      };
+
+      input.addEventListener("change", refresh);
+
+      zone.addEventListener("dragover",  e => { e.preventDefault(); zone.classList.add("dragover"); });
+      zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+      zone.addEventListener("drop", e => {
+        e.preventDefault();
+        zone.classList.remove("dragover");
+        if (e.dataTransfer.files.length) {
+          // Transfer dropped file into the input
+          const dt = new DataTransfer();
+          dt.items.add(e.dataTransfer.files[0]);
+          input.files = dt.files;
+          refresh();
+        }
+      });
+    }
+
+    wireZone("bomZone", "bomFile", "bomName");
+    wireZone("enqZone", "enqFile", "enqName");
+
+    // ── Generate ────────────────────────────────────────────────────────
+    async function generate() {
+      const bomFile = document.getElementById("bomFile").files[0];
+      const enqFile = document.getElementById("enqFile").files[0];
+      const status  = document.getElementById("status");
+      const btn     = document.getElementById("generateBtn");
+      const spinner = document.getElementById("spinner");
+      const btnText = document.getElementById("btnText");
+
+      status.className = "";
+      status.style.display = "none";
+      status.textContent = "";
+
+      if (!bomFile) { showError("Please select the PMC BOM List file."); return; }
+      if (!enqFile) { showError("Please select the Enquiry template file."); return; }
+
+      // Loading state
+      btn.disabled = true;
+      spinner.style.display = "block";
+      btnText.textContent = "Generating…";
+
+      try {
+        const form = new FormData();
+        form.append("bom", bomFile);
+        form.append("enq", enqFile);
+
+        const res = await fetch("/generate", { method: "POST", body: form });
+
+        if (res.ok) {
+          // Trigger browser download
+          const blob = await res.blob();
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement("a");
+          a.href     = url;
+          a.download = "Enquiry_Output.xlsx";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          status.className = "success";
+          status.textContent = "✅  Output generated and downloaded successfully!";
+        } else {
+          const data = await res.json().catch(() => ({ error: "Unknown server error." }));
+          showError(data.error || "Server returned an error.");
+        }
+      } catch (err) {
+        showError("Network error: " + err.message);
+      } finally {
+        btn.disabled = false;
+        spinner.style.display = "none";
+        btnText.textContent = "Generate Output";
+      }
+    }
+
+    function showError(msg) {
+      const status = document.getElementById("status");
+      status.className = "error";
+      status.textContent = "❌  " + msg;
+    }
+  </script>
+</body>
+</html>
