@@ -30,6 +30,37 @@ FOOTER1_ROW  = 62
 FOOTER2_ROW  = 63
 MAT_SUP_PATH = Path(__file__).parent / "Material_Supplier.xlsx"
 
+# Material categories derived from Material & Supplier.xlsx.
+# Used as the built-in fallback (and primary source when the xlsx is absent).
+# Each entry: name (display), sheet (safe filename stem), keywords (uppercase match tokens).
+BUILTIN_CATEGORIES = [
+    {
+        "name":     "AL5083 or AL6061",
+        "sheet":    "AL5083_AL6061",
+        "keywords": ["AL5083", "AL6061", "AL"],
+    },
+    {
+        "name":     "MS (bandsaw)",
+        "sheet":    "MS",
+        "keywords": ["MS"],
+    },
+    {
+        "name":     "Delrin White/Delrin Black/PE (color)/Bakelite (color)/PU/Teflon",
+        "sheet":    "Plastic",
+        "keywords": ["DELRIN", "PE", "BAKELITE", "PU", "TEFLON", "NYLON"],
+    },
+    {
+        "name":     "SS304",
+        "sheet":    "SS304",
+        "keywords": ["SS304", "SS"],
+    },
+    {
+        "name":     "S45C",
+        "sheet":    "S45C",
+        "keywords": ["S45C"],
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,15 +142,9 @@ def get_pmc_rows(ws_bom):
 # Material & Supplier categorisation
 # ---------------------------------------------------------------------------
 
-def load_material_categories(mat_sup_path: str) -> list:
-    """Read Material & Supplier.xlsx; return ordered list of category dicts.
-
-    Each dict has:
-      name     – original cell text (used for display)
-      sheet    – sanitised Excel sheet name (≤31 chars)
-      keywords – uppercase strings used to match BOM material values
-    """
-    wb = load_workbook(mat_sup_path)
+def _parse_categories_from_xlsx(path: str) -> list:
+    """Parse Material & Supplier.xlsx into a list of category dicts."""
+    wb = load_workbook(path)
     ws = wb.active
     categories = []
     for r in range(2, ws.max_row + 1):
@@ -128,14 +153,12 @@ def load_material_categories(mat_sup_path: str) -> list:
             continue
         cat_name = str(mat_val).strip()
 
-        # Build a clean sheet-tab name
-        sheet_name = re.sub(r"\(.*?\)", "", cat_name)                          # remove (...)
-        sheet_name = re.sub(r"\s*/\s*", "_", sheet_name)                       # / → _
-        sheet_name = re.sub(r"\s+or\s+", "_", sheet_name, flags=re.IGNORECASE) # " or " → _
+        sheet_name = re.sub(r"\(.*?\)", "", cat_name)
+        sheet_name = re.sub(r"\s*/\s*", "_", sheet_name)
+        sheet_name = re.sub(r"\s+or\s+", "_", sheet_name, flags=re.IGNORECASE)
         sheet_name = re.sub(r"[\s_]+", "_", sheet_name).strip("_ ")
         sheet_name = sheet_name[:31]
 
-        # Build match keywords: split on "/" and "or", strip colour qualifiers
         raw_parts = re.split(r"\s*/\s*|\s+or\s+", cat_name, flags=re.IGNORECASE)
         keywords = []
         for part in raw_parts:
@@ -143,12 +166,18 @@ def load_material_categories(mat_sup_path: str) -> list:
             if kw:
                 keywords.append(kw)
 
-        categories.append({
-            "name":     cat_name,
-            "sheet":    sheet_name,
-            "keywords": keywords,
-        })
+        categories.append({"name": cat_name, "sheet": sheet_name, "keywords": keywords})
     return categories
+
+
+def get_categories() -> list:
+    """Return categories from the bundled xlsx if available, otherwise use built-ins."""
+    if MAT_SUP_PATH.exists():
+        try:
+            return _parse_categories_from_xlsx(str(MAT_SUP_PATH))
+        except Exception:
+            pass
+    return BUILTIN_CATEGORIES
 
 
 def match_material_category(material: str, categories: list) -> dict | None:
@@ -241,7 +270,7 @@ def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
     return buf.read(), {"pmc_rows": len(pmc_rows), "sheets": ["All"]}
 
 
-def build_enquiry_zip(bom_path: str, enq_path: str, mat_sup_path: str) -> tuple[bytes, dict]:
+def build_enquiry_zip(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
     """Produce a zip containing one .xlsx per material category."""
     wb_bom = load_workbook(bom_path)
     ws_bom = wb_bom.active
@@ -250,9 +279,7 @@ def build_enquiry_zip(bom_path: str, enq_path: str, mat_sup_path: str) -> tuple[
     if not pmc_rows:
         raise ValueError("No PMC rows found in BOM file. Check that column O contains 'PMC'.")
 
-    categories = load_material_categories(mat_sup_path)
-    if not categories:
-        raise ValueError("No material categories found in Material & Supplier file.")
+    categories = get_categories()
 
     # Group PMC rows by category
     grouped: OrderedDict = OrderedDict()
@@ -346,16 +373,9 @@ def generate():
             tmp_bom_path = tmp_bom.name
             tmp_enq_path = tmp_enq.name
 
-        if MAT_SUP_PATH.exists():
-            out_bytes, summary = build_enquiry_zip(
-                tmp_bom_path, tmp_enq_path, str(MAT_SUP_PATH)
-            )
-            download_name = "Enquiry_Output.zip"
-            mimetype      = "application/zip"
-        else:
-            out_bytes, summary = build_enquiry_bytes(tmp_bom_path, tmp_enq_path)
-            download_name = "Enquiry_Output.xlsx"
-            mimetype      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        out_bytes, summary = build_enquiry_zip(tmp_bom_path, tmp_enq_path)
+        download_name = "Enquiry_Output.zip"
+        mimetype      = "application/zip"
 
     except ValueError as e:
         return jsonify({"error": str(e)}), 422
