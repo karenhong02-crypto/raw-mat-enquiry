@@ -18,8 +18,13 @@ from flask import Flask, render_template, request, send_file, jsonify
 
 try:
     from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill
+    from openpyxl.styles.colors import Color
 except ImportError:
     sys.exit("Missing dependency. Run:  pip install openpyxl")
+
+# Blue, Accent 5, Lighter 40%  (theme index 8, tint +0.4)
+AL6061_FILL = PatternFill(fill_type="solid", fgColor=Color(theme=8, tint=0.3999755859375))
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024   # 32 MB upload limit
@@ -194,8 +199,12 @@ def match_material_category(material: str, categories: list) -> dict | None:
 # Sheet filling
 # ---------------------------------------------------------------------------
 
-def fill_enquiry_sheet(ws, pmc_rows: list):
+def fill_enquiry_sheet(ws, pmc_rows: list, company: str = "AFA TECHNOLOGIES SDN BHD"):
     """Fill one enquiry worksheet with pmc_rows. Mutates ws in-place."""
+    # Update company name in title row, clear project name row
+    ws.cell(1, 3).value = f"{company} REQUEST RAW MATERIAL ENQUIRE"
+    ws.cell(2, 3).value = None   # blank but formatting preserved
+
     footer1 = capture_row(ws, FOOTER1_ROW)
     footer2 = capture_row(ws, FOOTER2_ROW)
     ref_fmt = capture_row(ws, DATA_START)
@@ -238,6 +247,10 @@ def fill_enquiry_sheet(ws, pmc_rows: list):
             dst.alignment     = copy(ref_fmt[c]["alignment"])
             dst.number_format = ref_fmt[c]["number_format"]
 
+        # Highlight AL6061 material cell — Blue, Accent 5, Lighter 40%
+        if item["material"].upper().startswith("AL6061"):
+            ws.cell(row, 4).fill = AL6061_FILL
+
     last_data_row = DATA_START + n_new - 1
     new_footer1   = last_data_row + 1
     new_footer2   = last_data_row + 2
@@ -270,7 +283,7 @@ def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
     return buf.read(), {"pmc_rows": len(pmc_rows), "sheets": ["All"]}
 
 
-def build_enquiry_zip(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
+def build_enquiry_zip(bom_path: str, enq_path: str, company: str = "AFA TECHNOLOGIES SDN BHD") -> tuple[bytes, dict]:
     """Produce a zip containing one .xlsx per material category."""
     wb_bom = load_workbook(bom_path)
     ws_bom = wb_bom.active
@@ -278,6 +291,9 @@ def build_enquiry_zip(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
     pmc_rows = get_pmc_rows(ws_bom)
     if not pmc_rows:
         raise ValueError("No PMC rows found in BOM file. Check that column O contains 'PMC'.")
+
+    # Sort by AFA code A→Z, then by material A→Z
+    pmc_rows.sort(key=lambda x: (x["afa"].upper(), x["material"].upper()))
 
     categories = get_categories()
 
@@ -316,7 +332,7 @@ def build_enquiry_zip(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
 
             # Load a fresh copy of the template for each category
             wb_enq = load_workbook(io.BytesIO(enq_bytes))
-            fill_enquiry_sheet(wb_enq.active, rows)
+            fill_enquiry_sheet(wb_enq.active, rows, company)
 
             xlsx_buf = io.BytesIO()
             wb_enq.save(xlsx_buf)
@@ -373,7 +389,8 @@ def generate():
             tmp_bom_path = tmp_bom.name
             tmp_enq_path = tmp_enq.name
 
-        out_bytes, summary = build_enquiry_zip(tmp_bom_path, tmp_enq_path)
+        company = request.form.get("company", "AFA TECHNOLOGIES SDN BHD").strip() or "AFA TECHNOLOGIES SDN BHD"
+        out_bytes, summary = build_enquiry_zip(tmp_bom_path, tmp_enq_path, company)
         download_name = "Enquiry_Output.zip"
         mimetype      = "application/zip"
 
