@@ -172,7 +172,8 @@
       <div class="icon">📋</div>
       <h1>RAW Mat Enquiry Drag and Drop</h1>
       <p>Upload the PMC BOM list and the Enquiry template.<br>
-         The system will map all PMC rows and return a filled-out Excel file.</p>
+         The system will map all PMC rows and return a filled-out Excel file<br>
+         with each material type on a separate sheet.</p>
     </div>
 
     <!-- Upload slots -->
@@ -280,19 +281,27 @@
         const res = await fetch("/generate", { method: "POST", body: form });
 
         if (res.ok) {
-          // Trigger browser download
+          // Determine filename from Content-Disposition or fall back
+          const disposition = res.headers.get("Content-Disposition") || "";
+          const fnMatch     = disposition.match(/filename="?([^"]+)"?/);
+          const filename    = fnMatch ? fnMatch[1] : "Enquiry_Output.zip";
+          const filesHeader = res.headers.get("X-Files-Generated") || "";
+
           const blob = await res.blob();
           const url  = URL.createObjectURL(blob);
           const a    = document.createElement("a");
           a.href     = url;
-          a.download = "Enquiry_Output.xlsx";
+          a.download = filename;
           document.body.appendChild(a);
           a.click();
           a.remove();
           URL.revokeObjectURL(url);
 
-          status.className = "success";
-          status.textContent = "✅  Output generated and downloaded successfully!";
+          const fileList = filesHeader
+            ? "\n\nFiles inside zip:\n• " + filesHeader.split(", ").join("\n• ")
+            : "";
+          status.className   = "success";
+          status.textContent = "✅  Output generated and downloaded successfully!" + fileList;
         } else {
           const data = await res.json().catch(() => ({ error: "Unknown server error." }));
           showError(data.error || "Server returned an error.");

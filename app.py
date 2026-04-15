@@ -9,6 +9,8 @@ import re
 import sys
 import tempfile
 import traceback
+import zipfile
+from collections import OrderedDict
 from copy import copy
 from pathlib import Path
 
@@ -22,11 +24,15 @@ except ImportError:
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024   # 32 MB upload limit
 
-ALLOWED_EXT = {".xlsx", ".xlsm", ".xls"}
+ALLOWED_EXT  = {".xlsx", ".xlsm", ".xls"}
+DATA_START   = 6
+FOOTER1_ROW  = 62
+FOOTER2_ROW  = 63
+MAT_SUP_PATH = Path(__file__).parent / "Material_Supplier.xlsx"
 
 
 # ---------------------------------------------------------------------------
-# Helpers  (same as generate_enquiry_raw_mat.py)
+# Helpers
 # ---------------------------------------------------------------------------
 
 def allowed(filename: str) -> bool:
@@ -101,57 +107,102 @@ def get_pmc_rows(ws_bom):
     return rows
 
 
-def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
-    """Run the full generation and return (xlsx_bytes, summary_dict)."""
-    wb_bom = load_workbook(bom_path)
-    wb_enq = load_workbook(enq_path)
-    ws_bom = wb_bom.active
-    ws_enq = wb_enq.active
+# ---------------------------------------------------------------------------
+# Material & Supplier categorisation
+# ---------------------------------------------------------------------------
 
-    pmc_rows = get_pmc_rows(ws_bom)
-    if not pmc_rows:
-        raise ValueError("No PMC rows found in BOM file. Check that column O contains 'PMC'.")
+def load_material_categories(mat_sup_path: str) -> list:
+    """Read Material & Supplier.xlsx; return ordered list of category dicts.
 
-    DATA_START  = 6
-    FOOTER1_ROW = 62
-    FOOTER2_ROW = 63
+    Each dict has:
+      name     – original cell text (used for display)
+      sheet    – sanitised Excel sheet name (≤31 chars)
+      keywords – uppercase strings used to match BOM material values
+    """
+    wb = load_workbook(mat_sup_path)
+    ws = wb.active
+    categories = []
+    for r in range(2, ws.max_row + 1):
+        mat_val = ws.cell(r, 1).value
+        if not mat_val:
+            continue
+        cat_name = str(mat_val).strip()
 
-    footer1 = capture_row(ws_enq, FOOTER1_ROW)
-    footer2 = capture_row(ws_enq, FOOTER2_ROW)
-    ref_fmt  = capture_row(ws_enq, DATA_START)
+        # Build a clean sheet-tab name
+        sheet_name = re.sub(r"\(.*?\)", "", cat_name)                          # remove (...)
+        sheet_name = re.sub(r"\s*/\s*", "_", sheet_name)                       # / → _
+        sheet_name = re.sub(r"\s+or\s+", "_", sheet_name, flags=re.IGNORECASE) # " or " → _
+        sheet_name = re.sub(r"[\s_]+", "_", sheet_name).strip("_ ")
+        sheet_name = sheet_name[:31]
+
+        # Build match keywords: split on "/" and "or", strip colour qualifiers
+        raw_parts = re.split(r"\s*/\s*|\s+or\s+", cat_name, flags=re.IGNORECASE)
+        keywords = []
+        for part in raw_parts:
+            kw = re.sub(r"\(.*?\)", "", part).strip().upper()
+            if kw:
+                keywords.append(kw)
+
+        categories.append({
+            "name":     cat_name,
+            "sheet":    sheet_name,
+            "keywords": keywords,
+        })
+    return categories
+
+
+def match_material_category(material: str, categories: list) -> dict | None:
+    """Return the first category whose keywords match material, or None."""
+    mat_upper = material.upper().strip()
+    for cat in categories:
+        for kw in cat["keywords"]:
+            if mat_upper == kw or mat_upper.startswith(kw):
+                return cat
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Sheet filling
+# ---------------------------------------------------------------------------
+
+def fill_enquiry_sheet(ws, pmc_rows: list):
+    """Fill one enquiry worksheet with pmc_rows. Mutates ws in-place."""
+    footer1 = capture_row(ws, FOOTER1_ROW)
+    footer2 = capture_row(ws, FOOTER2_ROW)
+    ref_fmt = capture_row(ws, DATA_START)
 
     n_old = FOOTER1_ROW - DATA_START
     n_new = len(pmc_rows)
 
     if n_new > n_old:
-        ws_enq.insert_rows(FOOTER1_ROW, n_new - n_old)
+        ws.insert_rows(FOOTER1_ROW, n_new - n_old)
     elif n_new < n_old:
         surplus = n_old - n_new
-        ws_enq.delete_rows(FOOTER1_ROW - surplus, surplus)
+        ws.delete_rows(FOOTER1_ROW - surplus, surplus)
 
     for i, item in enumerate(pmc_rows):
         row = DATA_START + i
         t, w, l = parse_size(item["pmc_raw"])
 
-        ws_enq.cell(row,  1).value = i + 1
-        ws_enq.cell(row,  2).value = None
-        ws_enq.cell(row,  3).value = item["afa"]
-        ws_enq.cell(row,  4).value = item["material"]
-        ws_enq.cell(row,  5).value = item["qty"]
-        ws_enq.cell(row,  6).value = None
-        ws_enq.cell(row,  7).value = item["pmc_raw"]
-        ws_enq.cell(row,  8).value = t
-        ws_enq.cell(row,  9).value = w
-        ws_enq.cell(row, 10).value = l
-        ws_enq.cell(row, 11).value = None
-        ws_enq.cell(row, 12).value = t
-        ws_enq.cell(row, 13).value = w
-        ws_enq.cell(row, 14).value = l
-        ws_enq.cell(row, 15).value = None
-        ws_enq.cell(row, 16).value = f"=E{row}*O{row}"
+        ws.cell(row,  1).value = i + 1
+        ws.cell(row,  2).value = None
+        ws.cell(row,  3).value = item["afa"]
+        ws.cell(row,  4).value = item["material"]
+        ws.cell(row,  5).value = item["qty"]
+        ws.cell(row,  6).value = None
+        ws.cell(row,  7).value = item["pmc_raw"]
+        ws.cell(row,  8).value = t
+        ws.cell(row,  9).value = w
+        ws.cell(row, 10).value = l
+        ws.cell(row, 11).value = None
+        ws.cell(row, 12).value = t
+        ws.cell(row, 13).value = w
+        ws.cell(row, 14).value = l
+        ws.cell(row, 15).value = None
+        ws.cell(row, 16).value = f"=E{row}*O{row}"
 
         for c in range(1, 17):
-            dst = ws_enq.cell(row, c)
+            dst = ws.cell(row, c)
             dst.font          = copy(ref_fmt[c]["font"])
             dst.fill          = copy(ref_fmt[c]["fill"])
             dst.border        = copy(ref_fmt[c]["border"])
@@ -162,22 +213,96 @@ def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
     new_footer1   = last_data_row + 1
     new_footer2   = last_data_row + 2
 
-    restore_row(ws_enq, new_footer1, footer1)
-    restore_row(ws_enq, new_footer2, footer2)
-    ws_enq.cell(new_footer1, 16).value = f"=SUM(P{DATA_START}:P{last_data_row})"
+    restore_row(ws, new_footer1, footer1)
+    restore_row(ws, new_footer2, footer2)
+    ws.cell(new_footer1, 16).value = f"=SUM(P{DATA_START}:P{last_data_row})"
+
+
+# ---------------------------------------------------------------------------
+# Build functions
+# ---------------------------------------------------------------------------
+
+def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
+    """Single-sheet output (no material segregation)."""
+    wb_bom = load_workbook(bom_path)
+    wb_enq = load_workbook(enq_path)
+    ws_bom = wb_bom.active
+    ws_enq = wb_enq.active
+
+    pmc_rows = get_pmc_rows(ws_bom)
+    if not pmc_rows:
+        raise ValueError("No PMC rows found in BOM file. Check that column O contains 'PMC'.")
+
+    fill_enquiry_sheet(ws_enq, pmc_rows)
 
     buf = io.BytesIO()
     wb_enq.save(buf)
     buf.seek(0)
+    return buf.read(), {"pmc_rows": len(pmc_rows), "sheets": ["All"]}
 
+
+def build_enquiry_zip(bom_path: str, enq_path: str, mat_sup_path: str) -> tuple[bytes, dict]:
+    """Produce a zip containing one .xlsx per material category."""
+    wb_bom = load_workbook(bom_path)
+    ws_bom = wb_bom.active
+
+    pmc_rows = get_pmc_rows(ws_bom)
+    if not pmc_rows:
+        raise ValueError("No PMC rows found in BOM file. Check that column O contains 'PMC'.")
+
+    categories = load_material_categories(mat_sup_path)
+    if not categories:
+        raise ValueError("No material categories found in Material & Supplier file.")
+
+    # Group PMC rows by category
+    grouped: OrderedDict = OrderedDict()
+    for cat in categories:
+        grouped[cat["sheet"]] = {"cat": cat, "rows": []}
+    other_rows = []
+
+    for item in pmc_rows:
+        cat = match_material_category(item["material"], categories)
+        if cat:
+            grouped[cat["sheet"]]["rows"].append(item)
+        else:
+            other_rows.append(item)
+
+    active_groups = [(k, v) for k, v in grouped.items() if v["rows"]]
+    if other_rows:
+        active_groups.append(("Other", {"cat": {"name": "Other", "sheet": "Other"}, "rows": other_rows}))
+
+    if not active_groups:
+        raise ValueError("No PMC rows matched any material category.")
+
+    # Read the template bytes once — reload fresh for every category
+    with open(enq_path, "rb") as f:
+        enq_bytes = f.read()
+
+    zip_buf = io.BytesIO()
+    file_names = []
+
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for _, group_data in active_groups:
+            cat      = group_data["cat"]
+            rows     = group_data["rows"]
+            filename = f"Enquiry_{cat['sheet']}.xlsx"
+
+            # Load a fresh copy of the template for each category
+            wb_enq = load_workbook(io.BytesIO(enq_bytes))
+            fill_enquiry_sheet(wb_enq.active, rows)
+
+            xlsx_buf = io.BytesIO()
+            wb_enq.save(xlsx_buf)
+            zf.writestr(filename, xlsx_buf.getvalue())
+            file_names.append(filename)
+
+    zip_buf.seek(0)
     summary = {
-        "pmc_rows":   n_new,
-        "data_start": DATA_START,
-        "data_end":   last_data_row,
-        "footer1":    new_footer1,
-        "footer2":    new_footer2,
+        "pmc_rows":   len(pmc_rows),
+        "files":      file_names,
+        "other_rows": len(other_rows),
     }
-    return buf.read(), summary
+    return zip_buf.read(), summary
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +335,7 @@ def generate():
         return jsonify({"error": " ".join(errors)}), 400
 
     # ── Save uploads to temp files ────────────────────────────────────────
+    tmp_bom_path = tmp_enq_path = None
     try:
         with (
             tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_bom,
@@ -220,25 +346,39 @@ def generate():
             tmp_bom_path = tmp_bom.name
             tmp_enq_path = tmp_enq.name
 
-        xlsx_bytes, summary = build_enquiry_bytes(tmp_bom_path, tmp_enq_path)
+        if MAT_SUP_PATH.exists():
+            out_bytes, summary = build_enquiry_zip(
+                tmp_bom_path, tmp_enq_path, str(MAT_SUP_PATH)
+            )
+            download_name = "Enquiry_Output.zip"
+            mimetype      = "application/zip"
+        else:
+            out_bytes, summary = build_enquiry_bytes(tmp_bom_path, tmp_enq_path)
+            download_name = "Enquiry_Output.xlsx"
+            mimetype      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     except ValueError as e:
         return jsonify({"error": str(e)}), 422
     except Exception:
         return jsonify({"error": "Processing failed.\n" + traceback.format_exc()}), 500
     finally:
-        Path(tmp_bom_path).unlink(missing_ok=True)
-        Path(tmp_enq_path).unlink(missing_ok=True)
+        for p in (tmp_bom_path, tmp_enq_path):
+            if p:
+                Path(p).unlink(missing_ok=True)
 
     # ── Stream the file back ──────────────────────────────────────────────
-    buf = io.BytesIO(xlsx_bytes)
+    buf = io.BytesIO(out_bytes)
     buf.seek(0)
-    return send_file(
+    response = send_file(
         buf,
         as_attachment=True,
-        download_name="Enquiry_Output.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        download_name=download_name,
+        mimetype=mimetype,
     )
+    files_made = summary.get("files") or summary.get("sheets", [])
+    response.headers["X-Files-Generated"] = ", ".join(files_made)
+    response.headers["X-PMC-Rows"]        = str(summary.get("pmc_rows", 0))
+    return response
 
 
 # ---------------------------------------------------------------------------
