@@ -292,8 +292,8 @@ def build_enquiry_zip(bom_path: str, enq_path: str, company: str = "AFA TECHNOLO
     if not pmc_rows:
         raise ValueError("No PMC rows found in BOM file. Check that column O contains 'PMC'.")
 
-    # Sort by AFA code A→Z, then by material A→Z
-    pmc_rows.sort(key=lambda x: (x["afa"].upper(), x["material"].upper()))
+    # Sort by material A→Z first, then by AFA code A→Z within each material
+    pmc_rows.sort(key=lambda x: (x["material"].upper(), x["afa"].upper()))
 
     categories = get_categories()
 
