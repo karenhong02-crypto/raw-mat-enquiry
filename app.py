@@ -195,6 +195,36 @@ def match_material_category(material: str, categories: list) -> dict | None:
     return None
 
 
+# Footer text constants — always written regardless of template content
+FOOTER1_COL_G  = "OUR REQUIREMENT SIZE"
+FOOTER1_COL_L  = "OFFER SIZE (can slightly bigger, CANNOT smaller)"
+FOOTER2_COL_L  = "Please highlight In color if size offer different"
+
+
+def detect_footer_rows(ws) -> tuple:
+    """Scan the worksheet bottom-up to find the two footer rows.
+    Returns (footer1_row, footer2_row), falling back to hardcoded defaults."""
+    f1 = f2 = None
+    for r in range(ws.max_row, DATA_START, -1):
+        for c in range(1, ws.max_column + 1):
+            val = ws.cell(r, c).value
+            if val is None:
+                continue
+            s = str(val)
+            if f1 is None and "OUR REQUIREMENT SIZE" in s:
+                f1 = r
+            if f2 is None and "Please highlight" in s:
+                f2 = r
+        if f1 and f2:
+            break
+    # If footer rows are adjacent, infer the missing one
+    if f1 and not f2:
+        f2 = f1 + 1
+    if f2 and not f1:
+        f1 = f2 - 1
+    return (f1 or FOOTER1_ROW), (f2 or FOOTER2_ROW)
+
+
 # ---------------------------------------------------------------------------
 # Sheet filling
 # ---------------------------------------------------------------------------
@@ -205,18 +235,20 @@ def fill_enquiry_sheet(ws, pmc_rows: list, company: str = "AFA TECHNOLOGIES SDN 
     ws.cell(1, 3).value = f"{company} REQUEST RAW MATERIAL ENQUIRE"
     ws.cell(2, 3).value = None   # blank but formatting preserved
 
-    footer1 = capture_row(ws, FOOTER1_ROW)
-    footer2 = capture_row(ws, FOOTER2_ROW)
+    footer1_row, footer2_row = detect_footer_rows(ws)
+
+    footer1 = capture_row(ws, footer1_row)
+    footer2 = capture_row(ws, footer2_row)
     ref_fmt = capture_row(ws, DATA_START)
 
-    n_old = FOOTER1_ROW - DATA_START
+    n_old = footer1_row - DATA_START
     n_new = len(pmc_rows)
 
     if n_new > n_old:
-        ws.insert_rows(FOOTER1_ROW, n_new - n_old)
+        ws.insert_rows(footer1_row, n_new - n_old)
     elif n_new < n_old:
         surplus = n_old - n_new
-        ws.delete_rows(FOOTER1_ROW - surplus, surplus)
+        ws.delete_rows(footer1_row - surplus, surplus)
 
     for i, item in enumerate(pmc_rows):
         row = DATA_START + i
@@ -257,7 +289,12 @@ def fill_enquiry_sheet(ws, pmc_rows: list, company: str = "AFA TECHNOLOGIES SDN 
 
     restore_row(ws, new_footer1, footer1)
     restore_row(ws, new_footer2, footer2)
+
+    # Always write footer text explicitly so it survives any template variation
+    ws.cell(new_footer1,  7).value = FOOTER1_COL_G
+    ws.cell(new_footer1, 12).value = FOOTER1_COL_L
     ws.cell(new_footer1, 16).value = f"=SUM(P{DATA_START}:P{last_data_row})"
+    ws.cell(new_footer2, 12).value = FOOTER2_COL_L
 
 
 # ---------------------------------------------------------------------------
