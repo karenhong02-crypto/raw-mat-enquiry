@@ -301,11 +301,18 @@ def fill_enquiry_sheet(ws, pmc_rows: list, company: str = "AFA TECHNOLOGIES SDN 
 # Build functions
 # ---------------------------------------------------------------------------
 
+def get_bom_sheet(wb_bom):
+    """Always use the sheet named 'Table' from the BOM workbook."""
+    if "Table" not in wb_bom.sheetnames:
+        raise ValueError("Sheet 'Table' not found in BOM file. Please ensure the BOM contains a sheet named 'Table'.")
+    return wb_bom["Table"]
+
+
 def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
     """Single-sheet output (no material segregation)."""
     wb_bom = load_workbook(bom_path)
     wb_enq = load_workbook(enq_path)
-    ws_bom = wb_bom.active
+    ws_bom = get_bom_sheet(wb_bom)
     ws_enq = wb_enq.active
 
     pmc_rows = get_pmc_rows(ws_bom)
@@ -323,7 +330,7 @@ def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
 def build_enquiry_zip(bom_path: str, enq_path: str, company: str = "AFA TECHNOLOGIES SDN BHD") -> tuple[bytes, dict]:
     """Produce a zip containing one .xlsx per material category."""
     wb_bom = load_workbook(bom_path)
-    ws_bom = wb_bom.active
+    ws_bom = get_bom_sheet(wb_bom)
 
     pmc_rows = get_pmc_rows(ws_bom)
     if not pmc_rows:
