@@ -153,9 +153,15 @@
       word-break: break-all;
     }
 
+    /* ── Button row ─────────────────────────────────────────────────────── */
+    .btn-row {
+      display: flex;
+      gap: 12px;
+    }
+
     /* ── Generate button ────────────────────────────────────────────────── */
     #generateBtn {
-      width: 100%;
+      flex: 1;
       padding: 14px;
       font-size: 15px;
       font-weight: 700;
@@ -173,6 +179,26 @@
 
     #generateBtn:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
     #generateBtn:disabled { opacity: .55; cursor: not-allowed; }
+
+    /* ── Reset button ───────────────────────────────────────────────────── */
+    #resetBtn {
+      padding: 14px 20px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #4a5568;
+      background: #edf2f7;
+      border: 2px solid #cbd5e0;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background .2s, border-color .2s, transform .1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    #resetBtn:hover { background: #e2e8f0; border-color: #a0aec0; transform: translateY(-1px); }
 
     /* ── Spinner ────────────────────────────────────────────────────────── */
     .spinner {
@@ -272,11 +298,16 @@
 
     </div>
 
-    <!-- Generate button -->
-    <button id="generateBtn" onclick="generate()">
-      <div class="spinner" id="spinner"></div>
-      <span id="btnText">Generate Output</span>
-    </button>
+    <!-- Button row -->
+    <div class="btn-row">
+      <button id="generateBtn" onclick="generate()">
+        <div class="spinner" id="spinner"></div>
+        <span id="btnText">Generate Output</span>
+      </button>
+      <button id="resetBtn" onclick="resetForm()" title="Clear all files and start over">
+        🔄 Reset
+      </button>
+    </div>
 
     <!-- Status -->
     <div id="status"></div>
@@ -386,6 +417,25 @@
       const status = document.getElementById("status");
       status.className = "error";
       status.textContent = "❌  " + msg;
+    }
+
+    // ── Reset ────────────────────────────────────────────────────────────
+    function resetForm() {
+      // Clear file inputs
+      ["bomFile", "enqFile"].forEach(id => {
+        const input = document.getElementById(id);
+        input.value = "";
+        input.dispatchEvent(new Event("change"));
+      });
+
+      // Reset company selection to default
+      document.getElementById("coAFA").checked = true;
+
+      // Clear status
+      const status = document.getElementById("status");
+      status.className = "";
+      status.style.display = "none";
+      status.textContent = "";
     }
   </script>
 </body>
