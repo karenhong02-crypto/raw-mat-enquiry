@@ -302,10 +302,32 @@ def fill_enquiry_sheet(ws, pmc_rows: list, company: str = "AFA TECHNOLOGIES SDN 
 # ---------------------------------------------------------------------------
 
 def get_bom_sheet(wb_bom):
-    """Always use the sheet named 'Table' from the BOM workbook."""
-    if "Table" not in wb_bom.sheetnames:
-        raise ValueError("Sheet 'Table' not found in BOM file. Please ensure the BOM contains a sheet named 'Table'.")
-    return wb_bom["Table"]
+    """Return the BOM worksheet using a flexible, case-insensitive strategy:
+      1. Sheet tab named 'Table' (case-insensitive).
+      2. Any sheet containing an Excel Table/ListObject named 'Table' (case-insensitive).
+      3. Any sheet containing ANY Excel Table/ListObject (any name).
+      4. Fall back to the first sheet in the workbook.
+    """
+    sheet_map = {s.lower(): s for s in wb_bom.sheetnames}
+
+    # 1. Sheet tab named 'Table' (any case)
+    if "table" in sheet_map:
+        return wb_bom[sheet_map["table"]]
+
+    # 2. Sheet containing an Excel Table named 'Table' (any case)
+    for sheet_name in wb_bom.sheetnames:
+        ws = wb_bom[sheet_name]
+        if any(t.lower() == "table" for t in ws.tables):
+            return ws
+
+    # 3. Any sheet that has ANY Excel Table in it
+    for sheet_name in wb_bom.sheetnames:
+        ws = wb_bom[sheet_name]
+        if ws.tables:
+            return ws
+
+    # 4. Fall back to the first sheet
+    return wb_bom[wb_bom.sheetnames[0]]
 
 
 def build_enquiry_bytes(bom_path: str, enq_path: str) -> tuple[bytes, dict]:
@@ -422,16 +444,19 @@ def generate():
         return jsonify({"error": " ".join(errors)}), 400
 
     # ── Save uploads to temp files ────────────────────────────────────────
+    # On Windows, NamedTemporaryFile holds an open handle inside the with-block,
+    # blocking a second write. Close immediately after creation.
     tmp_bom_path = tmp_enq_path = None
     try:
-        with (
-            tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_bom,
-            tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_enq,
-        ):
-            bom_file.save(tmp_bom.name)
-            enq_file.save(tmp_enq.name)
-            tmp_bom_path = tmp_bom.name
-            tmp_enq_path = tmp_enq.name
+        tmp_bom = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp_bom.close()
+        tmp_enq = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp_enq.close()
+        tmp_bom_path = tmp_bom.name
+        tmp_enq_path = tmp_enq.name
+
+        bom_file.save(tmp_bom_path)
+        enq_file.save(tmp_enq_path)
 
         company = request.form.get("company", "AFA TECHNOLOGIES SDN BHD").strip() or "AFA TECHNOLOGIES SDN BHD"
         out_bytes, summary = build_enquiry_zip(tmp_bom_path, tmp_enq_path, company)
